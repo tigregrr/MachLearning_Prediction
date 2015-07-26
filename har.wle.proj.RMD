@@ -1,0 +1,171 @@
+## **Weight Lifting Exercises - Machine Learning Project**
+##### Course: Machine Learning - John Hopkins University - Coursera
+##### Student: Luis Urbina
+##### July 26, 2015
+
+.
+
+### **I Background**
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+.
+
+### **II    Execution Plan**
+1)	Download the given data-sets from the web. They are named as **Atraining** and **Atesting**
+2)	Partition the given **Atraining** data-set in two: **Btraining** and **Btesting** in a proportion of 60/40. It allows to validate our developed model and to calculate its error using the Btesting data-set. 
+3)	Clean the **Btraining** features from zero variance and missing values before it is used to build the model.  
+4)	Build two different models for classification and regression using the **Btraining** data set. It is used the **Random Forest - rf** and the **Linear Discriminant Analysis - lda** models.
+5)	Validate the model performance on the **Btraining** data-set, and determine the most accure model.
+6)	Validate the accuracy of the developed model using the **Btesting** data set.  
+7)	Predict outcomes using the developed algorithm, model, for the given **Atesting** data set.
+
+Note that the modeling time, depending of the hardware PC and operative system, could take more than 15 minutes. For this reason and for speed up the processing time, it is used a parallel process. It requires you to install the **doParallel** package. 
+
+.
+
+### **III    Loading and Basic Analysis of the Data**
+
+The given data sets for training-01 and testing-01 are downloaded from the web from the https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  and the  https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv links, respectively. 
+
+```{r, echo=FALSE, cache=TRUE}
+wd <- getwd()
+urlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+destTrain <- file.path(wd, "pml-training.csv", sep='') 
+download.file(urlTrain, destTrain, mode = 'wb')
+Atraining <- read.csv(destTrain, na.strings = c("", "NA", "#DIV/0!"))
+```
+
+```{r, echo=FALSE, cache=TRUE}
+urlTest <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+destTest <- file.path(wd, "pml-testing.csv", sep='') 
+download.file(urlTest, destTest, mode = 'wb')
+Atesting <- read.csv(destTest, na.strings = c("", "NA", "#DIV/0!"))
+```
+
+The **Atraining** data set has `r dim(Atraining)` observations and variables respectively. The **Atesting** data set also has `r dim(Atesting)` observations and variables. The variable **classe** determine the manner how well people exercise. About this variable, it is shown below that it is a class factor variable with 5 levels. The table shows the frequency of observations for each level.   
+
+```{r, echo=TRUE, cache=TRUE}
+str(Atraining$classe)
+table(Atraining$classe)
+```
+
+.
+
+### **IV Partitioning the Atraining Data Set**
+
+The **Atraining** data set is partitioned in two dataset: the **Btraining** and the **Btesting**. The percentage of distribution is 60/40.  
+
+```{r, echo=TRUE, cache=TRUE}
+library(lattice);library(ggplot2);library(caret)
+set.seed(100)
+trainset <- createDataPartition(Atraining$classe, p = 0.6, list = FALSE)
+Btraining <- Atraining[trainset, ]
+Btesting <- Atraining[-trainset, ]
+```
+
+After the partition, the **Btraining** has `r dim(Btraining)` observations and variables respectively. The **Btesting** data set also has `r dim(Btesting)` observations and variables.
+
+.
+
+### **V     Variable Selection**
+
+```{r, echo=TRUE, cache=TRUE}
+nzvVar <- nearZeroVar(Btraining)
+Btraining <- Btraining[, -nzvVar]
+```
+
+Before modeling, it is important to make a selection of the variables most relevant. It means eliminate the variables that show low variance between them. It is made by the code shown above. Thus, after the elimination of those variables, the **Btraining** data set is reduced from 160 variables to `r dim(Btraining)[2]` variables, keeping the same number of observations. 
+
+```{r, echo=TRUE, cache=TRUE}
+cntlength <- sapply(Btraining, function(x) {
+                sum(!(is.na(x) | x == "")) })
+nullCol <- names(cntlength[cntlength < 0.6 * length(Btraining$classe)])
+descriptCol <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", 
+                 "cvtd_timestamp", "new_window", "num_window")
+eliminateCols <- c(descriptCol, nullCol)
+Btraining <- Btraining[, !names(Btraining) %in% eliminateCols]
+```
+
+It is also important to eliminate columns with a high percentage of missing values. In this case, is one column has more than 40 percent of missing values, it will be eliminated. Descriptive columns like names, or time series, are also excluded. It is made by the code shown above. Thus, after the elimination of those variables, the **Btraining** data set is reduced, for second time, from 131 variables to `r dim(Btraining)[2]` variables, keeping the same number of observations. After this cleaning process, the training data set is ready to be used for a modeling process.
+
+.
+
+### **VI  Models Train**
+
+For classification and regression modeling, it is used two models: the **Random Forest - rf** and the **Linear Discriminant Analysis - lda** models. Later is going to be compared the accuracy of each one and pick up the most accure. To model, it is used for both the **Btraining** data set. 
+
+The precessing model is made usig parallel processig. Code is next.  
+
+```{r, echo=TRUE, cache=TRUE}
+library(randomForest);library(MASS);
+library(foreach); library(iterators)
+library(parallel); library(doParallel)
+registerDoParallel(makeCluster(detectCores()))
+rfModel <- randomForest(classe ~ ., data = Btraining, importance = TRUE, ntrees = 10)
+model_lda <-train(classe ~ ., data = Btraining, method = 'lda')
+```
+
+.
+
+### **VII   Model Validation and Model Selection**
+
+Now it is tested the performance of each one of the two models. It is done predicting outcomes using the modeling data set; it is the **Btraining** data set. Results are shown using a **confusion matrix**. Code and results are next.
+
+```{r, echo=TRUE, cache=TRUE}
+PtrainingRF <- predict(rfModel, Btraining)
+(confusionMatrix(PtrainingRF, Btraining$classe))[[3]]
+
+PtrainingLDA <- predict(model_lda, Btraining)
+(confusionMatrix(PtrainingLDA, Btraining$classe))[[3]]
+```
+
+The **overall accuracy** against the modeling data set for the Random Forest is **99.97** percent, and for the Linear Discrimant Analysis it is **69.56** percent. The criteria is to select the model that show the highest accuracy. The Random Forest model is selected for holding better performance.  
+
+.
+
+### **VIII    Cross-Validation - Against Out-of-Sample Data Set**
+
+A high performance was expected validating the developed model with the Btraining data set. Now it is made a cross validation process using the held out data set, **Btesting**, in order to see if we have avoided overfitting. Performance and results are shown using a **confusion matrix**. Code is below.
+
+```{r, echo=TRUE, cache=TRUE}
+Ptesting <- predict(rfModel, Btesting)
+(confusionMatrix(Ptesting, Btesting$classe))[[3]]
+```
+
+The **overall accuracy against the out-of-sample data set**, Btesting, is **99.40** percent; it means the out-of-sample error is 0.6 percent; the Random Forest model performs very well.  
+
+.
+
+### **IX    Prediction Against Testing Data Set**
+After the model validation, the model is used for prediction using the given testing data set, **Atesting**.  The prediction of the algorithm for the test set and results are next. 
+
+```{r, echo=TRUE, cache=TRUE}
+predictTest <- predict(rfModel, Atesting)
+(predictTest)
+```
+
+According to instructions for this project, the output files are saved using the code shown below.
+
+```{r, echo=TRUE, cache=TRUE}
+answers <- as.vector(predictTest)
+
+pml_write_files = function(x) {
+    n = length(x)
+    for (i in 1:n) {
+        filename = paste0("problem_id_", i, ".txt")
+        write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, 
+            col.names = FALSE)
+    }
+}
+
+pml_write_files(answers)
+```
+
+.
+
+### **X    Bibliography**
+1) Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+2) Groupware; Human Activity Recognition. http://groupware.les.inf.puc-rio.br/har
